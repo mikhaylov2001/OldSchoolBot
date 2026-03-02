@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
 import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
@@ -371,7 +371,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
 
         String summary =
                 "✅ *Проверь бронь:*\n\n" +
-                        "🎮 Зона: " + cleanZoneName(b.getZone().getName()) + "\n" +
+                        "🎮 Зона: " + zoneIcon(b.getZone().getName()) + " " + cleanZoneName(b.getZone().getName()) + "\n" +
                         "📅 Дата: " + b.getDate().format(DATE_FMT_FULL) + "\n" +
                         "⏰ Время: " + b.getStartTime().format(TIME_FMT) + "\n" +
                         "⏳ Длительность: " + b.getDurationHours() + " ч\n" +
@@ -402,7 +402,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
                 "📌 *Новая бронь!*\n\n" +
                         "👤 " + booking.getClient().getFirstName() + "\n" +
                         "📞 " + booking.getClient().getPhone() + "\n" +
-                        "🎮 " + cleanZoneName(booking.getZone().getName()) + "\n" +
+                        "🎮 " + zoneIcon(booking.getZone().getName()) + " " + cleanZoneName(booking.getZone().getName()) + "\n" +
                         "📅 " + booking.getDate().format(DATE_FMT_FULL) + "\n" +
                         "⏰ " + booking.getStartTime().format(TIME_FMT) + "\n" +
                         "⏳ " + booking.getDurationHours() + " ч";
@@ -432,13 +432,18 @@ public class OldSchoolBot extends TelegramLongPollingBot {
         StringBuilder sb = new StringBuilder("📋 *Твои активные брони:*\n\n");
 
         for (Booking b : bookings) {
-            sb.append("• ").append(cleanZoneName(b.getZone().getName()))
+            sb.append("• ")
+                    .append(zoneIcon(b.getZone().getName())).append(" ")
+                    .append(cleanZoneName(b.getZone().getName()))
                     .append(" — ").append(b.getDate().format(DATE_FMT_FULL))
                     .append(" ").append(b.getStartTime().format(TIME_FMT))
                     .append(" (").append(b.getDurationHours()).append("ч)\n");
 
-            rows.add(List.of(btn("❌ Отменить " + b.getDate().format(DateTimeFormatter.ofPattern("dd.MM", RU)) +
-                    " " + b.getStartTime().format(TIME_FMT), "cancelbooking" + b.getId())));
+            rows.add(List.of(btn(
+                    "❌ Отменить " + b.getDate().format(DateTimeFormatter.ofPattern("dd.MM", RU)) +
+                            " " + b.getStartTime().format(TIME_FMT),
+                    "cancelbooking" + b.getId()
+            )));
         }
 
         rows.add(List.of(btn("🏠 Главная", "home")));
@@ -471,7 +476,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
                 "❌ *Отмена брони*\n\n" +
                         "👤 " + (booking.getClient() != null ? booking.getClient().getFirstName() : "—") + "\n" +
                         "📞 " + (booking.getClient() != null ? booking.getClient().getPhone() : "—") + "\n" +
-                        "🎮 " + cleanZoneName(booking.getZone().getName()) + "\n" +
+                        "🎮 " + zoneIcon(booking.getZone().getName()) + " " + cleanZoneName(booking.getZone().getName()) + "\n" +
                         "📅 " + booking.getDate().format(DATE_FMT_FULL) + "\n" +
                         "⏰ " + booking.getStartTime().format(TIME_FMT);
 
@@ -508,7 +513,8 @@ public class OldSchoolBot extends TelegramLongPollingBot {
             for (Booking b : bookings) {
                 sb.append("⏰ ").append(b.getStartTime().format(TIME_FMT))
                         .append(" (").append(b.getDurationHours()).append("ч)")
-                        .append(" — ").append(cleanZoneName(b.getZone().getName()))
+                        .append(" — ").append(zoneIcon(b.getZone().getName())).append(" ")
+                        .append(cleanZoneName(b.getZone().getName()))
                         .append("\n👤 ").append(b.getClient() != null ? b.getClient().getFirstName() : "—")
                         .append(" / ").append(b.getClient() != null ? b.getClient().getPhone() : "—")
                         .append("\n\n");
@@ -614,30 +620,22 @@ public class OldSchoolBot extends TelegramLongPollingBot {
         }
     }
 
+    /**
+     * Вместо edit текста: всегда новое сообщение, плюс удаляем кнопки у старого.
+     */
     private void sendOrEdit(Update update, long chatId, String text, InlineKeyboardMarkup markup) {
         if (update != null && update.hasCallbackQuery()) {
             Message m = update.getCallbackQuery().getMessage();
-
-            boolean sameText = Objects.equals(m.getText(), text);
-            boolean sameMarkup = Objects.equals(m.getReplyMarkup(), markup);
-            if (sameText && sameMarkup) return;
-
-            EditMessageText edit = new EditMessageText();
-            edit.setChatId(String.valueOf(chatId));
-            edit.setMessageId(m.getMessageId());
-            edit.setText(text);
-            edit.setParseMode("Markdown");
-            if (markup != null) edit.setReplyMarkup(markup);
-
             try {
-                execute(edit);
-            } catch (TelegramApiException e) {
-                if (e.getMessage() != null && e.getMessage().contains("message is not modified")) return;
-                e.printStackTrace();
+                EditMessageReplyMarkup rm = new EditMessageReplyMarkup();
+                rm.setChatId(String.valueOf(chatId));
+                rm.setMessageId(m.getMessageId());
+                rm.setReplyMarkup(null); // убираем inline-кнопки у старого сообщения
+                execute(rm);
+            } catch (TelegramApiException ignored) {
             }
-        } else {
-            send(chatId, text, markup);
         }
+        send(chatId, text, markup); // отправляем новое сообщение
     }
 
     private void send(long chatId, String text, InlineKeyboardMarkup markup) {
