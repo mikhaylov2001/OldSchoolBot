@@ -151,6 +151,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
             // admin
         else if ("admin_menu".equals(data) && isAdmin(chatId)) showAdminMenu(chatId, update);
         else if ("admin_allbookings".equals(data) && isAdmin(chatId)) showAdminAllBookings(chatId, update);
+        else if ("admin_allclients".equals(data) && isAdmin(chatId)) showAdminAllClients(chatId, update);
         else if ("admin_pick_date".equals(data) && isAdmin(chatId)) showAdminDatePicker(chatId, update);
     }
 
@@ -261,6 +262,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
 
     private void handleDatePage(long chatId, String data, Update update) {
         int newOffset = Integer.parseInt(data.replace("datepage:", ""));
+        newOffset = Math.max(0, Math.min(newOffset, DATE_MAX_FORWARD_DAYS));
         dateOffsets.put(chatId, newOffset);
         showDatePicker(chatId, update);
     }
@@ -489,20 +491,117 @@ public class OldSchoolBot extends TelegramLongPollingBot {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         markup.setKeyboard(List.of(
                 List.of(btn("📊 Все записи", "admin_allbookings")),
+                List.of(btn("👤 Все пользователи", "admin_allclients")),
                 List.of(btn("📅 Выбрать дату", "admin_pick_date")),
                 List.of(btn("🏠 Главная", "home"))
         ));
         sendOrEdit(update, chatId, "🛠 *Админ меню*", markup);
     }
 
+    // все будущие ACTIVE записи
     private void showAdminAllBookings(long chatId, Update update) {
+        LocalDate today = LocalDate.now();
+
+        List<Booking> bookings = bookingRepository
+                .findByDateGreaterThanEqualAndStatus(today, Booking.BookingStatus.ACTIVE);
+
+        bookings.sort(Comparator
+                .comparing(Booking::getDate)
+                .thenComparing(Booking::getStartTime));
+
+        StringBuilder sb = new StringBuilder("📊 *Все будущие активные записи*\n\n");
+        if (bookings.isEmpty()) {
+            sb.append("Нет записей.");
+        } else {
+            LocalDate currentDay = null;
+            for (Booking b : bookings) {
+                if (!b.getDate().equals(currentDay)) {
+                    currentDay = b.getDate();
+                    sb.append("📅 ").append(currentDay.format(DATE_FMT_FULL)).append("\n");
+                }
+                sb.append("⏰ ").append(b.getStartTime().format(TIME_FMT))
+                        .append(" (").append(b.getDurationHours()).append("ч)")
+                        .append(" — ").append(zoneIcon(b.getZone().getName())).append(" ")
+                        .append(cleanZoneName(b.getZone().getName()))
+                        .append("\n👤 ").append(b.getClient() != null ? b.getClient().getFirstName() : "—")
+                        .append(" / ").append(b.getClient() != null ? b.getClient().getPhone() : "—")
+                        .append("\n\n");
+            }
+        }
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(List.of(
+                List.of(btn("📅 Выбрать дату", "admin_pick_date")),
+                List.of(btn("🏠 Главная", "home"))
+        ));
+
+        sendOrEdit(update, chatId, sb.toString(), markup);
+    }
+
+    private void showAdminAllClients(long chatId, Update update) {
+        List<Client> clients = clientRepository.findAll();
+        clients.sort(Comparator.comparing(
+                Client::getFirstName,
+                Comparator.nullsLast(String::compareToIgnoreCase)
+        ));
+
+        StringBuilder sb = new StringBuilder("👤 *Все зарегистрированные пользователи*\n\n");
+        if (clients.isEmpty()) {
+            sb.append("Пока никого нет.");
+        } else {
+            for (Client c : clients) {
+                sb.append("• ")
+                        .append(c.getFirstName() != null ? c.getFirstName() : "—")
+                        .append(" — ")
+                        .append(c.getPhone() != null ? c.getPhone() : "без телефона")
+                        .append(" (id: ").append(c.getTelegramId()).append(")")
+                        .append("\n");
+            }
+        }
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(List.of(
+                List.of(btn("🛠 Админ", "admin_menu")),
+                List.of(btn("🏠 Главная", "home"))
+        ));
+
+        sendOrEdit(update, chatId, sb.toString(), markup);
+    }
+
+    // выбор даты для просмотра, без прошлых дней
+    private void showAdminDatePicker(long chatId, Update update) {
         int offset = adminDateOffsets.getOrDefault(chatId, 0);
         offset = Math.max(0, Math.min(offset, DATE_MAX_FORWARD_DAYS));
         adminDateOffsets.put(chatId, offset);
 
-        LocalDate day = LocalDate.now().plusDays(offset);
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
 
-        // показываем только ACTIVE, чтобы отменённые исчезали
+        LocalDate base = LocalDate.now().plusDays(offset);
+
+        for (int i = 0; i < DATE_WINDOW_DAYS; i++) {
+            LocalDate d = base.plusDays(i);
+            rows.add(List.of(btn("📅 " + d.format(DATE_FMT), "adminday:" + (offset + i))));
+        }
+
+        rows.add(List.of(
+                btn("◀️", "adminpage:" + Math.max(0, offset - DATE_WINDOW_DAYS)),
+                btn("▶️", "adminpage:" + Math.min(DATE_MAX_FORWARD_DAYS, offset + DATE_WINDOW_DAYS))
+        ));
+
+        rows.add(List.of(btn("🏠 Главная", "home")));
+        markup.setKeyboard(rows);
+
+        sendOrEdit(update, chatId, "📅 Выбери дату для просмотра:", markup);
+    }
+
+    private void handleAdminDay(long chatId, String data, Update update) {
+        int offset = Integer.parseInt(data.replace("adminday:", ""));
+        offset = Math.max(0, Math.min(offset, DATE_MAX_FORWARD_DAYS));
+        adminDateOffsets.put(chatId, offset);
+
+        // показываем записи только на один выбранный день
+        LocalDate day = LocalDate.now().plusDays(offset);
         List<Booking> bookings = bookingRepository.findByDateAndStatus(day, Booking.BookingStatus.ACTIVE);
         bookings.sort(Comparator.comparing(Booking::getStartTime));
 
@@ -536,40 +635,9 @@ public class OldSchoolBot extends TelegramLongPollingBot {
         sendOrEdit(update, chatId, sb.toString(), markup);
     }
 
-    private void showAdminDatePicker(long chatId, Update update) {
-        int offset = adminDateOffsets.getOrDefault(chatId, 0);
-        offset = Math.max(0, Math.min(offset, DATE_MAX_FORWARD_DAYS));
-        adminDateOffsets.put(chatId, offset);
-
-        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
-        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
-
-        LocalDate base = LocalDate.now().plusDays(offset);
-
-        for (int i = 0; i < DATE_WINDOW_DAYS; i++) {
-            LocalDate d = base.plusDays(i);
-            rows.add(List.of(btn("📅 " + d.format(DATE_FMT), "adminday:" + (offset + i))));
-        }
-
-        rows.add(List.of(
-                btn("◀️", "adminpage:" + Math.max(0, offset - DATE_WINDOW_DAYS)),
-                btn("▶️", "adminpage:" + Math.min(DATE_MAX_FORWARD_DAYS, offset + DATE_WINDOW_DAYS))
-        ));
-
-        rows.add(List.of(btn("🏠 Главная", "home")));
-        markup.setKeyboard(rows);
-
-        sendOrEdit(update, chatId, "📅 Выбери дату для просмотра:", markup);
-    }
-
-    private void handleAdminDay(long chatId, String data, Update update) {
-        int offset = Integer.parseInt(data.replace("adminday:", ""));
-        adminDateOffsets.put(chatId, offset);
-        showAdminAllBookings(chatId, update);
-    }
-
     private void handleAdminPage(long chatId, String data, Update update) {
         int newOffset = Integer.parseInt(data.replace("adminpage:", ""));
+        newOffset = Math.max(0, Math.min(newOffset, DATE_MAX_FORWARD_DAYS));
         adminDateOffsets.put(chatId, newOffset);
         showAdminDatePicker(chatId, update);
     }
@@ -593,7 +661,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
 
     private String zoneIcon(String zoneName) {
         String n = zoneName == null ? "" : zoneName.toLowerCase();
-        // если содержит "ps" -> джойстик, иначе -> комп (текстовый, "старый")
+        // если содержит "ps" -> джойстик, иначе -> комп
         return n.contains("ps") ? "🎮" : "🖥︎";
     }
 
@@ -620,9 +688,7 @@ public class OldSchoolBot extends TelegramLongPollingBot {
         }
     }
 
-    /**
-     * Вместо edit текста: всегда новое сообщение, плюс удаляем кнопки у старого.
-     */
+    // всегда новое сообщение, старым убираем inline-кнопки
     private void sendOrEdit(Update update, long chatId, String text, InlineKeyboardMarkup markup) {
         if (update != null && update.hasCallbackQuery()) {
             Message m = update.getCallbackQuery().getMessage();
@@ -630,12 +696,12 @@ public class OldSchoolBot extends TelegramLongPollingBot {
                 EditMessageReplyMarkup rm = new EditMessageReplyMarkup();
                 rm.setChatId(String.valueOf(chatId));
                 rm.setMessageId(m.getMessageId());
-                rm.setReplyMarkup(null); // убираем inline-кнопки у старого сообщения
+                rm.setReplyMarkup(null);
                 execute(rm);
             } catch (TelegramApiException ignored) {
             }
         }
-        send(chatId, text, markup); // отправляем новое сообщение
+        send(chatId, text, markup);
     }
 
     private void send(long chatId, String text, InlineKeyboardMarkup markup) {

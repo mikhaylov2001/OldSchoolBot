@@ -14,5 +14,6 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     boolean existsByZoneIdAndDateAndStartTimeBetween(
             Long zoneId, LocalDate date, LocalTime start, LocalTime end);
     List<Booking> findByDateAndStatus(LocalDate date, Booking.BookingStatus status);
+    List<Booking> findByDateGreaterThanEqualAndStatus(LocalDate date, Booking.BookingStatus status);
 
 }
