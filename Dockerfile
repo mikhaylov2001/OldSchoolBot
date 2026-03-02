@@ -7,6 +7,6 @@ COPY src ./src
 
 RUN mvn clean package -DskipTests
 
-EXPOSE 10001
+EXPOSE 8080
 
 CMD ["java", "-jar", "target/booking-bot-1.0.0.jar"]
