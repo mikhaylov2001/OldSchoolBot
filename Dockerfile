@@ -8,7 +8,7 @@ RUN mvn clean package -DskipTests
 # Этап запуска
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+COPY --from=build /app/target/booking-bot-1.0.0.jar app.jar
 
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","/app.jar"]
